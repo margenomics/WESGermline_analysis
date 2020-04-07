@@ -1,0 +1,118 @@
+#!/bin/bash
+
+# Julia 17.3.2020
+# Annotation of VCF files of project:
+
+PROJECT=20200227_NGarcia_DOvejero_WES
+
+# Prepare variables
+#------------------
+
+path=/bicoh/MARGenomics
+DIR=${path}/${PROJECT}
+
+# Prepare folders
+#------------------
+mkdir $DIR/Analysis/VariantAnnotation/logs
+
+
+#==============================#
+#    Annotate (vcfmaf/VEP)     #
+#==============================#
+cd $DIR/Analysis/VariantAnnotation
+mkdir $DIR/Analysis/VariantAnnotation/Annotated_Files
+
+# Creates first annotated VCF in /VariantCalling/VCF_Files/
+# Then creates a MAF file in OUDIR
+for i in $(ls $DIR/Analysis/VariantCalling/VCF_Files/*.PASS.vcf ) 
+	do
+	echo $i
+	j=`basename -s _recalibrated.PASS.vcf $i`
+	echo $j
+	OUTDIR=$DIR/Analysis/VariantAnnotation/Annotated_Files
+	sbatch $DIR/Analysis/VariantAnnotation/VEP.sh $j $i $OUTDIR;
+	sleep 1
+done
+
+
+#===========================#
+#           snpEff          #
+#===========================#
+# Summarizes number of snvs, indels called (compatible with multiqc). 
+# Argument to take only PASS variants
+
+for i in $(ls $DIR/Analysis/VariantCalling/VCF_Files/*.PASS.vcf ) 
+	do
+	echo $i
+	j=`basename -s _recalibrated.PASS.vcf $i`
+	echo $j
+	OUTDIR=$DIR/Analysis/VariantAnnotation/Annotated_Files
+	sbatch $DIR/Analysis/VariantAnnotation/snpEff.sh $j $i $OUTDIR;
+	sleep 1
+done
+
+#===========================#
+#           snpSift         #
+#===========================#
+cd $DIR/Analysis/VariantAnnotation
+module load snpEff/20180918
+
+for i in $(ls $DIR/Analysis/VariantAnnotation/Annotated_Files/V*-PASS.snpEFF.vcf ) 
+	do
+	echo $i
+	name=`basename -s -PASS.snpEFF.vcf $i`
+	echo $name
+	OUTDIR=$DIR/Analysis/VariantAnnotation/Annotated_Files
+	snpSift extractFields -s ";" -e "." $i CHROM POS REF ALT AF DP	 QD GEN[$name].GT GEN[$name].AD GEN[$name].DP GEN[$name].GQ GEN[$name].PL  ANN[*].IMPACT ANN[*].EFFECT ANN[*].BIOTYPE ANN[*].FEATUREID > ${OUTDIR}/${name}-PASS.snpEFF.snpSift.vcf
+	
+done
+
+### Jointcalls
+i=$DIR/Analysis/VariantAnnotation/Annotated_Files/Jointcalls-PASS.snpEFF.vcf
+name=Jointcalls
+OUTDIR=$DIR/Analysis/VariantAnnotation/Annotated_Files
+
+# Add one line per sample: GEN[SAMPLE].GT GEN[SAMPLE].AD GEN[SAMPLE].DP GEN[SAMPLE].GQ GEN[SAMPLE].PL
+snpSift extractFields -s ";" -e "." $i CHROM POS REF ALT AF DP QD \
+	GEN[VPADRE].GT GEN[VPADRE].AD GEN[VPADRE].DP GEN[VPADRE].GQ GEN[VPADRE].PL \
+	GEN[VTIO].GT GEN[VTIO].AD GEN[VTIO].DP GEN[VTIO].GQ GEN[VTIO].PL \
+	GEN[VMADRE].GT GEN[VMADRE].AD GEN[VMADRE].DP GEN[VMADRE].GQ GEN[VMADRE].PL \
+	GEN[VHIJO].GT GEN[VHIJO].AD GEN[VHIJO].DP GEN[VHIJO].GQ GEN[VHIJO].PL \
+	GEN[VHIJA].GT GEN[VHIJA].AD GEN[VHIJA].DP GEN[VHIJA].GQ GEN[VHIJA].PL \
+	 ANN[*].IMPACT ANN[*].EFFECT ANN[*].BIOTYPE ANN[*].FEATUREID \
+	> ${OUTDIR}/${name}-PASS.snpEFF.snpSift.vcf
+	
+
+
+#=================#
+#     ANNOVAR     #
+#=================#
+cd $DIR/Analysis/VariantAnnotation
+# Only PASS to speed up annovar annotations
+
+# Takes 1-2h per sample (normal, 30Gb)
+for i in $(ls ls $DIR/Analysis/VariantCalling/VCF_Files/*.PASS.vcf) 
+	do
+	echo $i
+	name=`basename -s _recalibrated.PASS.vcf $i`
+	echo $name
+	OUTDIR=$DIR/Analysis/VariantAnnotation/Annotated_Files
+	build=hg38
+	sbatch $DIR/Analysis/VariantAnnotation/annovar.sh $name $i $OUTDIR $build
+	sleep 1
+done
+
+
+#=================#
+#   MultiQC       #
+#=================#
+# Copy *snpEff to multiqc folder
+cp $DIR/Analysis/VariantAnnotation/Annotated_Files/V*.snpEff $DIR/QC/multiQC/
+
+cd $DIR/QC
+module load Python/3.5.2-foss-2016b
+
+multiqc . -o $DIR/QC/multiQC -f 
+
+
+

@@ -1,0 +1,98 @@
+#!/bin/bash
+
+# Julia 13.3.2020
+# Run HaplotypeCaller in GVCF mode with single sample calling, followed by joint calling (for exomes) of project:
+
+PROJECT=20200227_NGarcia_DOvejero_WES
+
+# Prepare variables
+#------------------
+
+path=/bicoh/MARGenomics
+DIR=${path}/${PROJECT}
+
+# Prepare folders
+#------------------
+mkdir $DIR/Analysis/VariantCalling/logs
+
+
+#==============================#
+#   HaplotypeCaller GVCF mode  #
+#==============================#
+cd $DIR/Analysis/VariantCalling
+mkdir $DIR/Analysis/VariantCalling/VCF_Files
+
+# 1 core 91 GB
+for i in $(ls $DIR/Analysis/ReadMapping/BAM_Files/*_dedup_bqsr.bam) 
+	do
+	#echo $i
+	name=`basename -s -pe_sorted_merged_dedup_bqsr.bam $i`
+	echo $name
+	OUTDIR=$DIR/Analysis/VariantCalling/VCF_Files
+	sbatch $DIR/Analysis/VariantCalling/HaplotypeCaller.GVCF.sh $name $i $OUTDIR;
+	sleep 1
+done
+
+#==============================#
+#   Joint genotype calling     #
+#==============================#
+cd $DIR/Analysis/VariantCalling
+
+OUTDIR=$DIR/Analysis/VariantCalling/VCF_Files
+
+sbatch $DIR/Analysis/VariantCalling/Join.GenotypeGVCFs.sh $OUTDIR;
+
+
+#======================#
+#   VQSR-filtering     #
+#======================#
+cd $DIR/Analysis/VariantCalling
+
+OUTDIR=$DIR/Analysis/VariantCalling/VCF_Files
+
+sbatch $DIR/Analysis/VariantCalling/VQSR.Filtering.sh $OUTDIR;
+
+
+#############  Print Stats ###########################
+cd $DIR/Analysis/VariantCalling
+OUTDIR=$DIR/Analysis/VariantCalling/VCF_Files
+
+for sample in $(echo VHIJA VHIJO VMADRE VPADRE VTIO) 
+	do
+	PASS=$(grep -c -v "##" ${OUTDIR}/${sample}_recalibrated.PASS.vcf )
+	ALL=$(grep -c -v "##" ${OUTDIR}/${sample}_recalibrated.vcf )
+	printf $sample"\tTotal: "$ALL"\tPASS: "$PASS"\tFiltered: "`expr $ALL - $PASS`"\n"
+
+done
+
+
+#===========================#
+# BCFTools (stats 4 multiqc)#
+#===========================#
+# Summarizes number of snvs, indels called (compatible with multiqc). 
+# Argument to take only PASS variants
+
+for i in $(ls $DIR/Analysis/VariantCalling/VCF_Files/V*.PASS.vcf) 
+	do
+	echo $i
+	j=`basename -s _recalibrated.PASS.vcf $i`
+	OUTDIR=$(dirname "${i}")
+	echo $j
+	echo $OUTDIR
+	sbatch $DIR/Analysis/VariantCalling/BCFtools.Stats.sh $j $i $OUTDIR
+	sleep 1
+done
+
+#=================#
+#   MultiQC       #
+#=================#
+# Copy *dedup.txt and *recal.table to multiqc folder
+cp $DIR/Analysis/VariantCalling/VCF_Files/V*.bcftools $DIR/QC/multiQC/
+
+cd $DIR/QC
+module load Python/3.5.2-foss-2016b
+
+multiqc . -o $DIR/QC/multiQC -f 
+
+
+ 

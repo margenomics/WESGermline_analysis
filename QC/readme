@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# 5 WES germinal samples. 2x 125bp.
+# QC Analysis of WES 5 samples of project: 
+
+PROJECT=20200227_NGarcia_DOvejero_WES
+
+# Prepare variables
+#------------------
+
+path=/bicoh/MARGenomics
+DIR=${path}/${PROJECT}
+FASTQDIR=${DIR}/rawData
+
+# Prepare folders
+#------------------
+mkdir $DIR/QC/logs
+
+#============#
+#   FASTQC   #
+#============#
+mkdir $DIR/QC/FastQC
+
+for i in $(ls $FASTQDIR/*fastq.gz) 
+	do
+	echo $i
+	outdir=$DIR/QC/FastQC
+	sbatch $DIR/QC/fastqc.sh $i $outdir
+	sleep 1
+done
+
+
+#=================#
+#   FASTQSCREEN   #
+#=================#
+mkdir $DIR/QC/FastqScreen
+
+for i in $(ls $FASTQDIR/*fastq.gz) 
+	do
+	echo $i
+	outdir=$DIR/QC/FastqScreen
+	sbatch $DIR/QC/fastq_screen.sh $i $outdir
+	sleep 1
+done
+
+#=================#
+#   MultiQC       #
+#=================#
+mkdir $DIR/QC/multiQC
+
+cd $DIR/QC
+module load Python/3.5.2-foss-2016b
+
+multiqc . -f -o $DIR/QC/multiQC
+
+
+#==============================#
+#   Remove adapter content     #
+#==============================#
+
+mkdir $DIR/QC/Cutadapt
+
+for i in $(ls $FASTQDIR/*read1.fastq.gz) 
+	do 
+	echo $i
+	name=`basename -s _read1.fastq.gz $i` 
+	echo $name 
+	echo $FASTQDIR
+	outdir=$DIR/QC/Cutadapt
+	sbatch $DIR/QC/trim_cutadapt.sh $name $FASTQDIR $outdir;
+	sleep 1; 
+done
+
+
+###### Grep summary statistics from stdout
+
+# % of reads that presented adapters (21%)
+cat $DIR/QC/logs/Cutadapt*.out | grep "adapter" 
+
+# % of bases written in ouptut (96% bp)
+cat $DIR/QC/logs/Cutadapt*.out | grep "written (filtered)" 
+
+
+#=================#
+#   MultiQC       #
+#=================#
+#Move the original FastQC folder to ensure that multiqc takes filtered Fastqc reports
+#mv $DIR/QC/FastQC $DIR/rawData
+
+cd $DIR/QC
+module load Python/3.5.2-foss-2016b
+
+multiqc . -o $DIR/QC/multiQC -f
+
+
+
+

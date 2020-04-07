@@ -1,0 +1,106 @@
+#!/bin/bash
+
+# Julia 6.3.2020
+# BAM alignement of project:
+
+PROJECT=20200227_NGarcia_DOvejero_WES
+
+# Prepare variables
+#------------------
+
+path=/bicoh/MARGenomics
+DIR=${path}/${PROJECT}
+
+# Prepare folders
+#------------------
+mkdir $DIR/Analysis/ReadMapping/logs
+
+
+#############################################################################################
+#################################TARGET PREPARATION##########################################
+cd $DIR/QC/Cutadapt # Change to $DIR/rawData if no trimming was done
+
+ ls -d "$PWD"/*fastq.gz | sed 's/...............$//' | sort -u > $DIR/Analysis/Targets_Fastq
+
+#############################################################################################
+#############################################################################################
+
+#===================#
+#   BWA alignemnt   #
+#===================#
+mkdir $DIR/Analysis/ReadMapping/BAM_Files
+
+for i in $(cat $DIR/Analysis/Targets_Fastq) 
+	do
+	name=`basename $i`
+	echo $name
+	INDIR=$DIR/QC/Cutadapt
+	OUTDIR=$DIR/Analysis/ReadMapping/BAM_Files
+	sbatch $DIR/Analysis/ReadMapping/BWA.alignment.sh $name $INDIR $OUTDIR
+	sleep 1
+done
+
+#===================#
+#   DEDUP + BQSR    #
+#===================#
+# MarkDuplicates is read group aware. A read group is a sample/library in a specific lane. So, if your read group identifies the lane, you will be fine.
+
+# Once you have pre-processed each read group individually, you merge read groups belonging to the same sample into a single BAM file. You can do this as a standalone step, bur for the sake of efficiency we combine this with the per-readgroup duplicate marking step (it's simply a matter of passing the multiple inputs to MarkDuplicates in a single command).
+
+# Dedup: 1:30h aprox per sample
+# Baserecalibrator: 3h per sample
+# Apply BQSR:  1:30h
+
+# normal. 1 cores 91Gb each (91Gb total). Entre 2 i 8 hores.
+for i in $(ls $DIR/Analysis/ReadMapping/BAM_Files/*.bam) 
+	do
+	#echo $i
+	name=`basename -s .bam $i`
+	echo $name
+	OUTDIR=$DIR/Analysis/ReadMapping/BAM_Files
+	sbatch $DIR/Analysis/ReadMapping/dd.bqsr.sh $name $i $OUTDIR;
+	sleep 1
+done
+
+#=================#
+#   QualiMap      #
+#=================#
+# In local
+# Need to put as maximum RAM as possible, otherwise some fail
+# -sd : skip duplicates marked with flag
+cd $DIR/Analysis/ReadMapping
+
+for i in $(ls $DIR/Analysis/ReadMapping/BAM_Files/*-pe_sorted_merged_dedup_bqsr.bam) 
+	do
+	echo $i
+	name=`basename -s -pe_sorted_merged_dedup_bqsr.bam $i`
+	echo $name
+	OUTDIR=$DIR/QC/multiQC
+	#sbatch $DIR/Analysis/ReadMapping/qualimap.sh $name $i $OUTDIR
+	
+	cd $OUTDIR
+	TARGETS=/bicoh/MARGenomics/annotationData/ExomeTargetRegions/SureSelect.Human.AllExon.V6.60Mb_hs_hg38/S07604514_Covered_6fields.bed
+	/bicoh/MARGenomics/Software/qualimap_v2.2.1/qualimap bamqc -bam $i -gff $TARGETS --java-mem-size=12G -sd
+	sleep 1
+done
+
+
+#=================#
+#   MultiQC       #
+#=================#
+# Copy *dedup.txt (Picard) and *recal.table (GATK) and *stats (qualimap) to multiqc folder
+cp $DIR/Analysis/ReadMapping/BAM_Files/*dedup.txt $DIR/QC/multiQC/
+cp $DIR/Analysis/ReadMapping/BAM_Files/*recal.table $DIR/QC/multiQC/
+cp -R $DIR/Analysis/ReadMapping/BAM_Files/*stats $DIR/QC/multiQC/
+
+
+cd $DIR/QC
+module load Python/3.5.2-foss-2016b
+
+multiqc . -o $DIR/QC/multiQC -f
+
+
+
+
+
+
